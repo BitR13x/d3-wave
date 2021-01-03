@@ -1,21 +1,29 @@
-import * as d3 from "d3";
-import { filterDataByTime } from "./filterData.js";
-import { RowRendererBit } from "./rowRenderers/bit.js";
-import { RowRendererBits } from "./rowRenderers/bits.js";
-import { RowRendererEnum } from "./rowRenderers/enum.js";
-import { RowRendererLabel } from "./rowRenderers/label.js";
-import { RowRendererStruct } from "./rowRenderers/struct.js";
-import { SCALAR_FORMAT } from "./numFormat.js";
-import { create_time_formatter_for_time_range } from "./timeFormat.js"
-import { treelist } from "./signalList.js"
-import '@fortawesome/fontawesome-free/js/all.js';
+"use strict";
+
+import * as d3 from 'd3';
+import { filterDataByTime } from './filterData.js';
+import { RowRendererBit } from './rowRenderers/bit.js';
+import { RowRendererBits } from './rowRenderers/bits.js';
+import { RowRendererEnum } from './rowRenderers/enum.js';
+import { RowRendererLabel } from './rowRenderers/label.js';
+import { RowRendererStruct } from './rowRenderers/struct.js';
+import { RowRendererArray } from './rowRenderers/array.js';
+import { createTimeFormatterForTimeRange } from './timeFormat.js';
+import { TreeList } from './treeList.js';
+import { faQuestion, faDownload } from '@fortawesome/free-solid-svg-icons';
+import { DragBarVertical } from './dragBar.js';
+import { exportStyledSvgToBlob } from './exportSvg.js'
+import { signalContextMenuInit } from './signalLabelContextMenu.js';
+import { Tooltip } from './tooltip.js';
+
+import './d3-wave.css';
 
 // main class which constructs the signal wave viewer
 export default class WaveGraph {
-
 	constructor(svg) {
 		this.svg = svg;
-		this.g = svg.append("g");
+		svg.classed('d3-wave', true);
+		this.dataG = svg.append('g');
 		this.xaxisScale = null;
 		this.yaxisG = null;
 		this.xaxisG = null;
@@ -30,7 +38,7 @@ export default class WaveGraph {
 				// currently used time range
 				range: [0, 1],
 				height: 20,
-				ypadding: 5,
+				ypadding: 5
 			},
 			margin: {
 				top: 20,
@@ -38,10 +46,11 @@ export default class WaveGraph {
 				bottom: 20,
 				left: 180
 			},
+			dragWidth: 5,
 			width: -1,
 			height: -1
 		};
-		this.TICKS_PER_X_AXIS = 10;
+		this.TICKS_PER_X_AXIS = 10; // number of ticks in X (time) axis
 		this.data = [];
 		// list of renderers for value rows
 		this.rowRenderers = [
@@ -50,27 +59,52 @@ export default class WaveGraph {
 			new RowRendererEnum(this),
 			new RowRendererLabel(this),
 			new RowRendererStruct(this),
+			new RowRendererArray(this),
 		];
-		this.draggedElem = null;
+		this.timeZoom = null;
+		this.labelAreaSizeDragBar = null;
+		this.labelContextMenu = signalContextMenuInit(this);
 		this.setSizes();
 	}
 
 	setZoom() {
-		var t_range = this.xRange;
-		var zoom = d3.zoom()
-			.scaleExtent([1 / t_range[1], 1.1])
-			.translateExtent([[t_range[0], 0], [t_range[1], 0]])
-			.on("zoom", this.zoomed.bind(this))
-		this.g.call(zoom);
+		var timeRange = this.xRange;
+		this.timeZoom = d3.zoom()
+			.scaleExtent([1 / timeRange[1], 1.1])
+			.translateExtent([[timeRange[0], 0], [timeRange[1], 0]])
+			.on('zoom', this.zoomed.bind(this));
+		this.dataG.call(this.timeZoom);
 	}
-	zoomed() {
+	zoomed(ev) {
+		if (!this.xaxisG)
+			return;
 		var range = this.xRange;
-		var t = d3.event.transform;
+		var t = ev.transform;
 		var totalRange = range[1] - range[0];
+		var displayWidth = this.xaxisG.select('.domain').node().getBBox().width;
+		var kDeltaToScroll = 0;
+		if (ev.sourceEvent.shiftKey) {
+			// horizontall scroll in data
+			var curR = this.sizes.row.range;
+			var prevK = (curR[1] - curR[0]) / totalRange;
+			kDeltaToScroll = t.k - prevK;
+			//console.log([t.k, prevK]);
+			t.k = prevK;
+		}
+		// zoom in time domain
 		var currentRange = totalRange * t.k;
-		var display_width = this.xaxisG.select(".domain").node().getBBox().width;
-		var begin = (-t.x / display_width) * currentRange;
+		//console.log(["kDeltaToScroll", kDeltaToScroll, "currentRange", currentRange, 't.x', t.x]);
+		var begin = (-t.x / displayWidth) * currentRange;
+		//console.log(["begin0", begin]);
+		if (kDeltaToScroll < 0) {
+			begin -= currentRange * 0.1;
+		} else if (kDeltaToScroll > 0) {
+			begin += currentRange * 0.1;
+		}
+		//console.log(["begin1", begin]);
 		begin = Math.max(Math.min(begin, range[1] - currentRange), 0);
+		//console.log(["begin2", begin]);
+		t.x = -(begin / currentRange) * displayWidth;
 		var end = begin + currentRange;
 		end = Math.max(end, 1);
 
@@ -79,42 +113,43 @@ export default class WaveGraph {
 			// update tick formatter becase time range has changed
 			// and we may want to use a different time unit
 			this.xaxis.tickFormat(
-				create_time_formatter_for_time_range(this.sizes.row.range)
+				createTimeFormatterForTimeRange(this.sizes.row.range)
 			);
 		}
 		this.draw();
 	}
     /*
-	 * extract width/height from svg and apply margin to main "g"
-	 */
+     * extract width/height from svg and apply margin to main "g"
+     */
 	setSizes() {
 		var svg = this.svg;
 		var s = this.sizes;
-		var w = svg.style('width') || svg.attr("width");
+		var w = svg.style('width') || svg.attr('width');
 		w = parseInt(w);
 		if (!Number.isFinite(w)) {
-			throw new Error("Can not resolve width of main SVG element");
+			throw new Error('Can not resolve width of main SVG element');
 		}
-		var h = parseInt(svg.style("height") || svg.attr("height"));
+		var h = parseInt(svg.style('height') || svg.attr('height'));
 		if (!Number.isFinite(h)) {
-			throw new Error("Can not resolve height of main SVG element");
+			throw new Error('Can not resolve height of main SVG element');
 		}
-		s.width = (w
-			- s.margin.left
-			- s.margin.right);
+		s.width = w - s.margin.left - s.margin.right;
 		if (s.width <= 0) {
-			throw new Error("Width too small for main SVG element " + s.width);
+			throw new Error('Width too small for main SVG element ' + s.width);
 		}
-		s.height = (h
-			- s.margin.top
-			- s.margin.bottom);
+		s.height = h - s.margin.top - s.margin.bottom;
 		if (s.height <= 0) {
-			throw new Error("Height too small for main SVG element " + s.height);
+			throw new Error('Height too small for main SVG element ' + s.height);
 		}
-		this.g.attr("transform",
-			"translate(" + s.margin.left + "," + s.margin.top + ")");
-		if (this.treelist)
+		this.dataG.attr('transform',
+			'translate(' + s.margin.left + ',' + s.margin.top + ')');
+
+		if (this.treelist) {
 			this.treelist.size(s.margin.left, s.height);
+		}
+		if (this.labelAreaSizeDragBar)
+			this.labelAreaSizeDragBar.size(s.dragWidth, s.height);
+
 	}
 
 	drawYHelpLine() {
@@ -123,54 +158,54 @@ export default class WaveGraph {
 		var svg = this.svg;
 		var graph = this;
 
+		function moveVerticalHelpLine(ev) {
+			var boundingRect = ev.target.getBoundingClientRect();
+            var xPos = ev.clientX - boundingRect.left - graph.sizes.margin.left; //x position within the element.
+			if (xPos < 0) { xPos = 0; }
+			svg.select('.vertical-help-line')
+				.attr('transform', function() {
+					return 'translate(' + xPos + ',0)';
+				})
+				.attr('y2', graph.sizes.height);
+		}
+
 		if (vhl) {
-			vhl.attr('y2', height)
+			vhl.attr('y2', height);
 		} else {
 			// construct new help line
-			this.verticalHelpLine = this.g.append('line')
+			this.verticalHelpLine = this.dataG.append('line')
 				.attr('class', 'vertical-help-line')
 				.attr('x1', 0)
 				.attr('y1', 0)
 				.attr('x2', 0)
 				.attr('y2', height);
 
-			function moveVerticalHelpLine() {
-				var xPos = d3.mouse(this)[0] - graph.sizes.margin.left;
-				if (xPos < 0)
-					xPos = 0;
-				d3.select(".vertical-help-line")
-					.attr("transform", function() {
-						return "translate(" + xPos + ",0)";
-					})
-					.attr("y2", graph.sizes.height);
-			}
-
 			svg.on('mousemove', moveVerticalHelpLine);
 		}
 	}
 
 	drawGridLines() {
-		// simple graph with grid lines in v4
+		// simple graph with grid lines in d3v4
 		// https://bl.ocks.org/d3noob/c506ac45617cf9ed39337f99f8511218
 		var height = this.sizes.height;
 		var xaxisScale = this.xaxisScale;
 		var xValues = xaxisScale.ticks(this.TICKS_PER_X_AXIS)
 			.map(function(d) {
-				return xaxisScale(d)
+				return xaxisScale(d);
 			});
 		// add the X gridlines (parallel with x axis)
-		var gridLines = this.g.selectAll(".grid-line-x")
+		var gridLines = this.dataG.selectAll('.grid-line-x')
 			.data(xValues);
 
 		gridLines
 			.enter()
-			.append("line")
-			.attr("class", "grid-line-x")
+			.append('line')
+			.attr('class', 'grid-line-x')
 			.merge(gridLines)
 			.attr('x1', function(d) { return d; })
 			.attr('y1', 0)
 			.attr('x2', function(d) { return d; })
-			.attr('y2', height)
+			.attr('y2', height);
 
 		gridLines.exit().remove();
 	}
@@ -187,21 +222,60 @@ export default class WaveGraph {
 		// https://bl.ocks.org/HarryStevens/54d01f118bc8d1f2c4ccd98235f33848
 		// General Update Pattern, I https://bl.ocks.org/mbostock/3808218
 		// http://bl.ocks.org/nnattawat/9054068
-		var xaxisG = this.xaxisG
+		var xaxisG = this.xaxisG;
 		if (xaxisG) {
 			// update xaxisG
 			var xaxis = this.xaxis;
-			xaxisG.call(xaxis.scale(xaxisScale))
+			xaxisG.call(xaxis.scale(xaxisScale));
 		} else {
 			// create xaxisG
 			this.xaxis = d3.axisTop(xaxisScale)
 				.tickFormat(
-					create_time_formatter_for_time_range(this.sizes.row.range)
+					createTimeFormatterForTimeRange(this.sizes.row.range)
 				);
-			this.xaxisG = this.g.append("g")
-				.attr("class", "axis axis-x")
+			this.xaxisG = this.dataG.append('g')
+				.attr('class', 'axis axis-x')
 				.call(this.xaxis);
 		}
+	}
+	drawControlIcons() {
+		var _this = this;
+		var sizes = this.sizes;
+		var ROW_Y = sizes.row.height + sizes.row.ypadding;
+		// Define the div for the tooltip
+
+		var icons = [
+			{
+				'icon': faQuestion,
+				'tooltip': 'd3-wave help placeholder[TODO]',
+			},
+			{
+				'icon': faDownload,
+				'tooltip': 'Download current screen as SVG image',
+				'onclick': function() {
+					var svg = exportStyledSvgToBlob(_this.svg.node());
+					var url = URL.createObjectURL(svg);
+					window.open(url);
+				}
+			}];
+		var tooltip = new Tooltip((d) => d.tooltip);
+		this.yaxisG.selectAll('text').data(icons).enter()
+			.append("g")
+			.attr("transform", function(d, i) {
+				return 'translate(' + (i * ROW_Y) + ',' + (-ROW_Y * 1) + ') scale(' + (ROW_Y / d.icon.icon[1] * 0.5) + ')';
+			})
+			.call(tooltip.addToElm.bind(tooltip))
+			.on('click', function(ev, d) {
+				if (d.onclick) {
+					return d.onclick();
+				}
+				return null;
+			})
+			.append('path')
+			.classed('icons', true)
+			.attr('d', function(d) {
+				return d.icon.icon[4];
+			});
 	}
 	drawYAxis() {
 		var sizes = this.sizes;
@@ -209,62 +283,30 @@ export default class WaveGraph {
 		// drawWaveLabels
 		this.waveRowY = d3.scaleLinear()
 			.domain([0, 1])
-			.range([0, sizes.row.height]);
+			.range([sizes.row.height, 0]);
 		// y axis
 		if (!this.yaxisG) {
-			//this.yaxisG.remove();
-			this.yaxisG = this.svg.append("g")
-				.classed("axis axis-y", true)
-			// Define the div for the tooltip
-			var div = d3.select("body").append("div")
-				.attr("class", "tooltip")
-				.style("opacity", 0);
-			// icons uf059 = ? uf067 = + uf01e = reset uf1f8 = del
-			var icons = [
-				{
-					"icon": '\uf059',
-					"onmouseover": function() {
-						div.transition()
-							.duration(200)
-							.style("opacity", .9);
-						div.html("tooltip fwampogmwarpo")
-							.style("left", (d3.event.pageX) + "px")
-							.style("top", (d3.event.pageY - 28) + "px");
+			// this.yaxisG.remove();
+			this.yaxisG = this.svg.append('g')
+				.classed('axis axis-y', true);
+			this.yaxisG.attr('transform',
+				'translate(0,' + (sizes.margin.top + ROW_Y / 2) + ')');
+			this.drawControlIcons();
 
-					},
-					"onmouseout": function() {
-						div.transition()
-							.duration(500)
-							.style("opacity", 0);
-					}
-				},
-				{ "icon": '\uf067' },
-				{ "icon": '\uf01e' },
-				{ "icon": '\uf1f8' }];
-			this.yaxisG.selectAll("text").data(icons).enter().append("text")
-			    .classed("icons", true)
-				.attr('font-family', 'FontAwesome')
-				.attr('font-size', function() { return 1 + 'em' })
-				.text(function(d) { return d.icon })
-				.attr("y", -ROW_Y * 0.75)
-				.attr("x", function(d, i) { return i * ROW_Y; })
-				.on("mouseover", function(d) {
-					if (d.onmouseover) {
-						return d.onmouseover();
-					} else {
-						return null;
-					}
-				})
-				.on("mouseout", function(d) {
-					if (d.onmouseout) {
-						return d.onmouseout();
-					} else {
-						return null;
-					}
-				});
-			this.yaxisG.attr("transform",
-				"translate(0," + (sizes.margin.top + ROW_Y / 2) + ")");
-			this.yaxisG.call(this.treelist);
+			if (this.treelist)
+				this.yaxisG.call(this.treelist.draw.bind(this.treelist));
+		}
+		if (!this.labelAreaSizeDragBar) {
+			var graph = this;
+			this.labelAreaSizeDragBar = new DragBarVertical(
+				this.yaxisG,
+				[sizes.dragWidth, sizes.height],
+				[0, sizes.width + sizes.margin.left],
+				[sizes.margin.left, sizes.margin.top]
+			).onDrag(function(d) {
+				sizes.margin.left = d.x;
+				graph.setSizes();
+			});
 		}
 	}
 	// draw whole graph
@@ -278,79 +320,87 @@ export default class WaveGraph {
 		var graph = this;
 		// drawWaves
 		// remove previously rendered row data
-		this.g.selectAll(".value-row")
+		this.dataG.selectAll('.value-row')
 			.remove();
 
-		var valueRows = this.g.selectAll(".value-row")
-			.data(graph.data)
+		var valueRows = this.dataG.selectAll('.value-row')
+			.data(graph.data);
 
 		function renderWaveRows(selection) {
 			// Select correct renderer function based on type of data series
 			selection.each(function(d) {
-				//var name = d[0];
+				// var name = d[0];
 				var signalType = d.type;
 				var data = d.data;
 				if (data && data.length) {
 					var parent = d3.select(this);
-					data = filterDataByTime(data, graph.sizes.row.range)
-					var rendererFound = false;
-					for (var i = 0; i < graph.rowRenderers.length; i++) {
-						var renderer = graph.rowRenderers[i];
-						if (renderer.select(signalType)) {
-							var formatter = SCALAR_FORMAT.UINT_HEX;
-							if (renderer instanceof RowRendererEnum) {
-								formatter = (d) => { return d; };
-							}
-							renderer.render(parent, data, signalType, formatter);
-							rendererFound = true;
-							break;
-						}
-					}
-					if (!rendererFound) {
-						throw new Error("None of installed renderers supports signalType:" + signalType);
-					}
+					data = filterDataByTime(data, graph.sizes.row.range);
+					signalType.renderer.render(parent, data, signalType, signalType.formatter);
 				}
 			});
 		}
-		// move value row to it's possition                  
+		// move value row to it's possition
 		var ROW_Y = sizes.row.height + sizes.row.ypadding;
 		valueRows.enter()
-			.append("g")
-			.attr("class", "value-row")
+			.append('g')
+			.attr('class', 'value-row')
 			.merge(valueRows)
 			.call(renderWaveRows)
-			.attr("transform", (d, i) => 'translate(0,' + (i * ROW_Y) + ')');
+			.attr('transform', (d, i) => 'translate(0,' + (i * ROW_Y) + ')');
 	}
 
 	bindData(_signalData) {
 		if (_signalData.constructor !== Object) {
-			throw new Error("Data in invalid format (should be dictionary and is " + _signalData + ")");
+			throw new Error('Data in invalid format (should be dictionary and is ' + _signalData + ')');
 		}
 		this.allData = _signalData;
 		var maxT = 0;
-		function discoverMaxT(d) {
+		var rowRenderers = this.rowRenderers;
+		function findRendererAndDiscoverMaxT(d) {
 			var dData = d.data;
 			if (dData && dData.length) {
-				var last_time_in_data = dData[dData.length - 1][0];
-				maxT = Math.max(maxT, last_time_in_data);
+				var lastTimeInData = dData[dData.length - 1][0];
+				maxT = Math.max(maxT, lastTimeInData);
 			}
-			(d.children || d._children || []).forEach(discoverMaxT);
+			var signalType = d.type;
+			for (var i = 0; i < rowRenderers.length; i++) {
+				var renderer = rowRenderers[i];
+				if (renderer.select(signalType)) {
+					var formatter = signalType.formatter;
+					if (!formatter) {
+						formatter = renderer.DEFAULT_FORMAT;
+					} else if (typeof formatter === 'string') {
+						formatter = renderer.FORMATTERS[formatter];
+						if (!formatter) {
+							throw new Error("Formatter value invalid " + signalType.formatter + "(" + d.name + ")");
+						}
+					}
+					signalType.formatter = formatter;
+					signalType.renderer = renderer;
+					break;
+				}
+			}
+			if (!signalType.renderer) {
+				throw new Error('None of installed renderers supports signalType:' + signalType);
+			}
+
+			(d.children || d._children || []).forEach(findRendererAndDiscoverMaxT);
 		}
-		discoverMaxT(this.allData);
+		findRendererAndDiscoverMaxT(this.allData);
 
 		var sizes = this.sizes;
 		this.xRange[1] = sizes.row.range[1] = maxT;
 		this.setZoom();
 		var ROW_Y = sizes.row.height + sizes.row.ypadding;
 		var graph = this;
-		this.treelist = treelist(ROW_Y)
-			.size(sizes.margin.left, sizes.height)
-			.data(this.allData)
-			.onChange(function(selection) {
-				graph.data = selection.map((d) => { return d.data });
-				graph.draw();
-			});
-		this.treelist.data(this.allData);
+		if (!this.treelist) {
+			this.treelist = new TreeList(ROW_Y, this.labelContextMenu)
+				.onChange(function(selection) {
+					graph.data = selection.map((d) => { return d.data; });
+					graph.draw();
+				});
+		}
 		this.setSizes();
+		this.treelist.data(this.allData);
 	}
 }

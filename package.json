@@ -1,6 +1,6 @@
 {
   "name": "d3-wave",
-  "version": "1.0.6",
+  "version": "1.1.2",
   "description": "D3.js signal wave visualizer",
   "main": "dist/d3-wave.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "pretest": "npm run build",
     "test": "NODE_ENV=development jest",
     "coveralls": "NODE_ENV=development jest --coverage && cat ./tests/coverage/lcov.info | coveralls",
-    "lint": "eslint src test --ignore-pattern tests/coverage*"
+    "lint": "eslint --fix --ignore-pattern tests/coverage* src/**/*.js tests/**/*.js"
   },
   "repository": {
     "type": "git",
@@ -35,27 +35,28 @@
   },
   "homepage": "https://github.com/Nic30/d3-wave#readme",
   "dependencies": {
-    "@fortawesome/fontawesome-free": "^5.13.1",
-    "d3": "latest"
+    "@fortawesome/free-solid-svg-icons": "^5.15.0",
+    "d3": "^6.2.0"
   },
   "devDependencies": {
-    "@babel/preset-env": "latest",
-    "@babel/preset-flow": "latest",
-    "coveralls": "latest",
-    "eslint": "^4.19.1",
-    "eslint-config-airbnb": "latest",
-    "eslint-config-standard": "^11.0.0",
-    "eslint-plugin-import": "^2.13.0",
-    "eslint-plugin-jsx-a11y": "^6.3.1",
-    "eslint-plugin-node": "^6.0.1",
-    "eslint-plugin-promise": "^3.8.0",
-    "eslint-plugin-react": "^7.9.1",
-    "eslint-plugin-standard": "^3.1.0",
-    "jest": "latest",
-    "rollup": "latest"
+    "@babel/preset-env": "^7.11.5",
+    "@babel/preset-flow": "^7.10.4",
+    "@rollup/plugin-node-resolve": "^9.0.0",
+    "coveralls": "^3.1.0",
+    "eslint": "^7.10.0",
+    "identity-obj-proxy": "^3.0.0",
+    "jest": "^26.4.2",
+    "rollup": "^2.28.2",
+    "rollup-plugin-postcss": "^3.1.8"
   },
   "jest": {
     "coverageDirectory": "<rootDir>/tests/coverage",
-    "verbose": true
+    "verbose": true,
+    "moduleNameMapper": {
+      "\\.(css|less)$": "identity-obj-proxy"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

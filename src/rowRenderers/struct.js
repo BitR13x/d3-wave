@@ -1,7 +1,9 @@
-import {RowRendererBase} from "./base.js"
+"use strict";
 
-export class RowRendererStruct extends RowRendererBase  {
-	select(typeInfo) {
-		return typeInfo.name === "struct";
-	}
+import {RowRendererBase} from './base.js';
+
+export class RowRendererStruct extends RowRendererBase {
+    select (typeInfo) {
+        return typeInfo.name === 'struct';
+    }
 }
