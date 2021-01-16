@@ -10,13 +10,13 @@ import { binarySearch } from './binarySearch.js';
  * @param chunkSize {Integer} Size of every group
  */
 function chunkString(str, chunkSize) {
-	return Array(Math.ceil(str.length / chunkSize)).fill().map(function(_, i) {
+	return Array(Math.ceil(str.length / chunkSize)).fill().map(function (_, i) {
 		return str.slice(i * chunkSize, i * chunkSize + chunkSize);
 	});
 }
 
 export const PREVIEW_TYPE = {
-	HEX_BYTES: function(d, size) {
+	HEX_BYTES: function (d, size) {
 		var res = SCALAR_FORMAT.UINT_HEX(d);
 		var extend = '0';
 		if (res[0] == 'X') {
@@ -52,6 +52,7 @@ export class HexEdit {
 		// html elements
 		this.parent = parent;
 		this.mainTable = null;
+		this.dataTable = null;
 		this.dataAreas = []; // list of td elements in the rows which are displaying the data
 	}
 	/**
@@ -81,7 +82,7 @@ export class HexEdit {
 			// update current data
 			startI = binarySearch(data, [t],
 				(el0, el1) => { return el0[0] > el1[0]; },
-				function(ar, el) {
+				function (ar, el) {
 					if (el < ar[0]) { return 0; }
 					if (el > ar[ar.length - 1]) { return ar.length; }
 					return -1;
@@ -96,11 +97,12 @@ export class HexEdit {
 			var d = d[1];
 			cd[addr] = d;
 		}
+		this.currentTime = newTime;
 	}
 	draw() {
 		if (!this.mainTable) {
 			var t = this.mainTable = this.parent.append("table")
-			                                    .classed("d3-wave-hexedit", true);
+				.classed("d3-wave-hexedit", true);
 
 			var inWordAddrTitles = [];
 			for (var i = 0; i < this.dataWordCellCnt + 1; i++) {
@@ -118,7 +120,7 @@ export class HexEdit {
 				.data(inWordAddrTitles).enter()
 				.append('td')
 				.classed("word-addr", true)
-				.text(function(d) {
+				.text(function (d) {
 					return d;
 				})
 
@@ -143,25 +145,37 @@ export class HexEdit {
 				}
 			}
 			var t = da.append("table");
-
-			var da = this.dataAreas[0];
-			var maxI = this.addrRange[1] / this.addrStep;
-			for (var i = this.addrRange[0] / this.addrStep; i < maxI; i++) {
-				var d = this.currentData[[i]];
-				if (d === undefined) {
-					d = "X";
-				}
-				var byteStrings = PREVIEW_TYPE.HEX_BYTES(d, this.dataWordCellCnt).reverse();
-				t.append("tr")
-					.selectAll("td")
-					.data(byteStrings)
-					.enter()
-					.append("td")
-					.classed("invalid", (d) => d.indexOf("X") >= 0)
-					.text((d) => d);
-			}
-
+			this.dataTable = t;
+		} else {
+			t = this.dataTable;
 		}
+		var da = this.dataAreas[0];
+		var maxI = this.addrRange[1] / this.addrStep;
+		for (var i = this.addrRange[0] / this.addrStep; i < maxI; i++) {
+			var d = this.currentData[[i]];
+			if (d === undefined) {
+				d = "X";
+			}
+			var byteStrings = PREVIEW_TYPE.HEX_BYTES(d, this.dataWordCellCnt).reverse();
+			//
+			t.selectAll("td").remove();
+			t.append("tr")
+				.selectAll("td")
+				.data(byteStrings)
+				.enter()
+				.append("td")
+				.classed("invalid", (d) => d.indexOf("X") >= 0)
+				.text((d) => d);
+		}
+		//func for limit td.addr and td.data
+		var main = this;
+		d3.select(".addr-time")
+			.on("change", function (e) {
+				// call setTime after
+				var newTime = parseInt(d3.select(this).property("value"));
+				main.setTime(newTime);
+				main.draw()
+			})
 
 	}
 }
